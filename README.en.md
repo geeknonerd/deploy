@@ -3,7 +3,7 @@
 
   Minimalistic deployment shell script, it run in server.
 
-__[中文文档](README.en.md)__
+__[中文文档](README.md)__
 
 __The project fork from [deploy](https://github.com/visionmedia/deploy), the original project put the shell script on the local computer, and remotely executes commands through SSH; this shell script is placed on the remote server for direct execution__
 
