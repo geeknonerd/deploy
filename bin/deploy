@@ -4,12 +4,13 @@
 # deploy(1) - Minimalistic shell script to deploy Git repositories.
 # Released under the MIT License.
 #
-# https://github.com/visionmedia/deploy
+# https://github.com/geeknonerd/deploy
 #
 
 VERSION="0.6.0"
-CONFIG=./deploy.conf
+CONFIG="`pwd`/deploy.conf"
 LOG=/tmp/deploy.log
+LOCK_FILE="/tmp/`basename $0`.lock"
 TEST=1
 REF=
 ENV=
@@ -34,13 +35,11 @@ usage() {
   Commands:
 
     setup                run remote setup commands
-    update               update deploy to the latest release
     revert [n]           revert to [n]th last deployment or 1
     config [key]         output config file or [key]
     curr[ent]            output current release commit
     prev[ious]           output previous release commit
     exec|run <cmd>       execute the given <cmd>
-    console              open an ssh session to the host
     list                 list previous deploy commits
     [ref]                deploy to [ref], the 'ref' setting, or latest tag
 
@@ -105,42 +104,12 @@ version() {
 }
 
 #
-# Return the ssh command to run.
-#
-
-ssh_command() {
-  local url="`config_get user`@`config_get host`"
-  local key="`config_get key`"
-  local forward_agent="`config_get forward-agent`"
-  local port="`config_get port`"
-  local needs_tty="`config_get needs_tty`"
-
-  test -n "$forward_agent" && local agent="-A"
-  test -n "$key" && local identity="-i $key"
-  test -n "$port" && local port="-p $port"
-  test -n "$needs_tty" && local tty="-t"
-  echo "ssh $tty $agent $port $identity $url"
-}
-
-#
 # Run the given remote <cmd>.
 #
 
 run() {
-  local shell="`ssh_command`"
-  echo $shell "\"$@\"" >> $LOG
-  $shell $@
-}
-
-#
-# Launch an interactive ssh console session.
-#
-
-console() {
-  local path="`config_get path`/current"
-  local shell="`ssh_command`"
-  echo $shell
-  exec $shell -t "cd $path; \$SHELL --login"
+  echo "\"$@\"" >> $LOG
+  eval $@
 }
 
 #
@@ -169,7 +138,7 @@ hook() {
     run "cd $path/current; \
       SHARED=\"$path/shared\" \
       $cmd 2>&1 | tee -a $LOG; \
-      exit \${PIPESTATUS[0]}"
+      (exit \${PIPESTATUS[0]})"
     test $? -eq 0
   else
     log hook $hook
@@ -311,31 +280,16 @@ require_env() {
   test -z "$ENV" && abort "<env> required"
 }
 
-#
-# Ensure all changes are committed and pushed before deploying.
-#
 
-check_for_local_changes() {
-  git --no-pager diff --exit-code --quiet          || abort "commit or stash your changes before deploying"
-  git --no-pager diff --exit-code --quiet --cached || abort "commit your staged changes before deploying"
-  [ -z "`git rev-list @{upstream}.. -n 1`" ]       || abort "push your changes before deploying"
-}
+# Check is Lock File exists, if not create it and set trap on exit
+if { set -C; 2>/dev/null > $LOCK_FILE; }; then
+  trap "rm -f $LOCK_FILE" EXIT
+else
+  echo "Lock file exists… exiting"
+  exit 2
+fi
 
-#
-# Update deploy.
-#
-
-update() {
-  log "updating deploy(1)"
-  rm -fr /tmp/deploy
-  git clone git://github.com/visionmedia/deploy.git \
-    --depth 0 \
-    /tmp/deploy \
-    &> /tmp/deploy.log \
-  && cd /tmp/deploy \
-  && make install \
-  && log "updated $VERSION -> `./bin/deploy --version`"
-}
+# Do Something, Main script work here…
 
 # parse argv
 
@@ -348,13 +302,11 @@ while test $# -ne 0; do
     -C|--chdir) log cd $1; cd $1; shift ;;
     -T|--no-tests) TEST=0 ;;
     run|exec) require_env; run "cd `config_get path`/current && $@"; exit ;;
-    console) require_env; console; exit ;;
     curr|current) require_env; current_commit; exit ;;
     prev|previous) require_env; nth_deploy_commit 2; exit ;;
     revert) require_env; revert_to ${1-1}; exit ;;
     setup) require_env; setup $@; exit ;;
     list) require_env; list_deploys; exit ;;
-    update) update; exit ;;
     config) config $@; exit ;;
     *)
       if test -z "$ENV"; then
@@ -367,7 +319,6 @@ while test $# -ne 0; do
 done
 
 require_env
-check_for_local_changes
 
 # deploy
 deploy "${REF:-`config_get ref`}"
